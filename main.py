@@ -107,3 +107,4 @@ def draw(message):
 if __name__ == "__main__":
     print("Бот запущен. Лимит: 100 генераций на пользователя.")
     bot.infinity_polling()
+
