@@ -13,13 +13,13 @@ DB_NAME = "users.db"
 bot = telebot.TeleBot(TOKEN)
 bot_username = bot.get_me().username
 
-# --- ИНИЦИАЛИЗАЦИЯ БД ---
+# --- ИНИЦИАЛИЗАЦИЯ БД (ТЕПЕРЬ 100 КРЕДИТОВ) ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY, 
-                  credits INTEGER DEFAULT 3, 
+                  credits INTEGER DEFAULT 100, 
                   referrer_id INTEGER,
                   total_gen INTEGER DEFAULT 0)''')
     conn.commit()
@@ -39,7 +39,7 @@ def get_user(user_id):
 def register_user(user_id, ref_id=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id, credits, referrer_id) VALUES (?, ?, ?)", (user_id, 3, ref_id))
+    c.execute("INSERT OR IGNORE INTO users (user_id, credits, referrer_id) VALUES (?, ?, ?)", (user_id, 100, ref_id))
     if ref_id and c.rowcount > 0: # Если юзер новый и есть реферер
         c.execute("UPDATE users SET credits = credits + 1 WHERE user_id = ?", (ref_id,))
     conn.commit()
@@ -73,7 +73,7 @@ def start(message):
 
     register_user(user_id, ref_id)
     
-    bot.send_message(user_id, f"🎨 Привет! Я создаю шедевры с помощью ИИ.\nУ тебя есть 3 бесплатные попытки!", reply_markup=main_menu())
+    bot.send_message(user_id, f"🎨 Привет! Я создаю шедевры с помощью ИИ.\nУ тебя есть 100 бесплатных попыток!", reply_markup=main_menu())
     if ref_id:
         try:
             bot.send_message(ref_id, "🔔 У вас новый реферал! +1 кредит зачислен.")
