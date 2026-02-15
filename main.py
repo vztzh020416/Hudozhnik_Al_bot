@@ -6,13 +6,12 @@ from telebot import types
 from io import BytesIO
 
 # --- КОНФИГУРАЦИЯ ---
-# ВНИМАНИЕ: Не делитесь этим токеном с посторонними!
 TOKEN = "8543701615:AAEo5ZfovosRPNQqwn_QZVvqGkAzbjGLVB8"
 ADMIN_ID = 1005217438  # Твой ID администратора
 DB_NAME = "users.db"
 
 bot = telebot.TeleBot(TOKEN)
-# Получаем имя бота для формирования реферальных ссылок
+
 try:
     bot_username = bot.get_me().username
 except Exception as e:
@@ -25,7 +24,7 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY, 
-                  credits INTEGER DEFAULT 3, 
+                  credits INTEGER DEFAULT 57, 
                   referrer_id INTEGER,
                   total_gen INTEGER DEFAULT 0)''')
     conn.commit()
@@ -45,8 +44,9 @@ def get_user(user_id):
 def register_user(user_id, ref_id=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id, credits, referrer_id) VALUES (?, ?, ?)", (user_id, 3, ref_id))
-    if ref_id and c.rowcount > 0: # Если юзер новый и есть реферер
+    # УСТАНОВЛЕНО 57 КРЕДИТОВ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ
+    c.execute("INSERT OR IGNORE INTO users (user_id, credits, referrer_id) VALUES (?, ?, ?)", (user_id, 57, ref_id))
+    if ref_id and c.rowcount > 0: 
         c.execute("UPDATE users SET credits = credits + 1 WHERE user_id = ?", (ref_id,))
     conn.commit()
     conn.close()
@@ -79,7 +79,8 @@ def start(message):
 
     register_user(user_id, ref_id)
     
-    bot.send_message(user_id, f"🎨 Привет! Я создаю шедевры с помощью ИИ.\nУ тебя есть 3 бесплатные попытки!", reply_markup=main_menu())
+    # ОБНОВЛЕН ТЕКСТ ПРИВЕТСТВИЯ
+    bot.send_message(user_id, f"🎨 Привет! Я создаю шедевры с помощью ИИ.\nУ тебя есть 57 бесплатных попыток!", reply_markup=main_menu())
     if ref_id:
         try:
             bot.send_message(ref_id, "🔔 У вас новый реферал! +1 кредит зачислен.")
@@ -119,7 +120,7 @@ def handle_buy(call):
         title="Пополнение баланса",
         description=f"Покупка {credits_map[call.data]} кредитов для генерации",
         invoice_payload=f"pay_{credits_map[call.data]}",
-        provider_token="", # Для Telegram Stars оставляем пустым
+        provider_token="", 
         currency="XTR",
         prices=[types.LabeledPrice(label="Кредиты", amount=amount)]
     )
@@ -189,16 +190,14 @@ def admin_stats(message):
 
 @bot.message_handler(commands=['add_credits'])
 def add_credits_command(message):
-    # Проверка на права админа
     if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "❌ Эта команда доступна только администратору.")
+        bot.send_message(message.chat.id, "❌ Доступ запрещен.")
         return
 
     try:
-        # Формат: /add_credits ID количество
         args = message.text.split()
         if len(args) < 3:
-            bot.send_message(message.chat.id, "⚠️ Формат: `/add_credits 12345678 10`", parse_mode="Markdown")
+            bot.send_message(message.chat.id, "⚠️ Формат: `/add_credits ID 10`", parse_mode="Markdown")
             return
 
         target_id = int(args[1])
@@ -206,9 +205,7 @@ def add_credits_command(message):
 
         update_credits(target_id, amount)
         bot.send_message(message.chat.id, f"✅ Добавлено {amount} кредитов пользователю `{target_id}`.", parse_mode="Markdown")
-        
-        # Уведомляем счастливчика
-        bot.send_message(target_id, f"🎁 Вам начислено {amount} бесплатных генераций! Пользуйтесь на здоровье.")
+        bot.send_message(target_id, f"🎁 Вам начислено {amount} бесплатных генераций!")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
 
