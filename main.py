@@ -7,7 +7,7 @@ import time  # Добавлено для реализации паузы
 from telebot import types
 
 # --- КОНФИГУРАЦИЯ ---
-TOKEN = "8571812650:AAGSeFANYtl8s2hJ7U8dAnp-q0oWW-aswMs"
+TOKEN = "8571812650:AAGSeFANYtl8s2hJ7U8dAnp-q0o"
 ADMIN_ID = 1005217438
 DB_NAME = "users.db"
 
@@ -151,4 +151,5 @@ if __name__ == "__main__":
     requests.packages.urllib3.disable_warnings() 
     print("Бот запущен! Анти-спам 10 сек активен.")
     bot.infinity_polling(skip_pending=True)
+
 
