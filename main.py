@@ -1,5 +1,5 @@
 import telebot
-import sqlite3
+import sqlite100
 import requests
 import urllib.parse
 import random
@@ -18,7 +18,7 @@ last_gen_time = {}
 
 # --- БАЗА ДАННЫХ ---
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite100.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                       (user_id INTEGER PRIMARY KEY, credits INTEGER DEFAULT 10, 
@@ -151,3 +151,4 @@ if __name__ == "__main__":
     requests.packages.urllib3.disable_warnings() 
     print("Бот запущен! Анти-спам 10 сек активен.")
     bot.infinity_polling(skip_pending=True)
+
