@@ -1,6 +1,7 @@
 import telebot
 import requests
 import sqlite3
+import time
 from io import BytesIO
 from datetime import datetime
 
@@ -59,13 +60,20 @@ def draw(message):
         return
 
     if use_credit(user_id):
-        bot.reply_to(message, "🎨 Рисую...")
+        msg = bot.reply_to(message, "🎨 Рисую...")
+        
         url = f"https://pollinations.ai/p/{prompt}?model=flux&width=512&height=512&nologo=true"
+        
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=30)
             if response.status_code == 200:
-                bot.send_photo(message.chat.id, BytesIO(response.content))
-        except:
-            bot.reply_to(message, "😢 Ошибка")
+                bot.delete_message(message.chat.id, msg.message_id)
+                bot.send_photo(message.chat.id, BytesIO(response.content), 
+                              caption=f"✨ Готово! Осталось: {get_credits(user_id)}")
+            else:
+                bot.edit_message_text("😢 Ошибка, попробуй другой запрос", message.chat.id, msg.message_id)
+                use_credit(user_id, add_back=True)  # возвращаем кредит
+        except Exception as e:
+            bot.edit_message_text("😢 Ошибка соединения, попробуй позже", message.chat.id, msg.message_id)
 
 bot.polling()
