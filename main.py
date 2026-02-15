@@ -6,12 +6,18 @@ from telebot import types
 from io import BytesIO
 
 # --- КОНФИГУРАЦИЯ ---
+# ВНИМАНИЕ: Не делитесь этим токеном с посторонними!
 TOKEN = "8543701615:AAEo5ZfovosRPNQqwn_QZVvqGkAzbjGLVB8"
-ADMIN_ID = 1005217438  # Замените на ваш реальный ID, если он отличается
+ADMIN_ID = 1005217438  # Твой ID администратора
 DB_NAME = "users.db"
 
 bot = telebot.TeleBot(TOKEN)
-bot_username = bot.get_me().username
+# Получаем имя бота для формирования реферальных ссылок
+try:
+    bot_username = bot.get_me().username
+except Exception as e:
+    print(f"Ошибка при запуске: проверьте токен! {e}")
+    bot_username = "Bot"
 
 # --- ИНИЦИАЛИЗАЦИЯ БД ---
 def init_db():
@@ -82,10 +88,11 @@ def start(message):
 @bot.message_handler(func=lambda m: m.text == "👤 Профиль")
 def profile(message):
     user = get_user(message.from_user.id)
-    text = (f"👤 *Ваш профиль*\n\n"
-            f"💰 Кредиты: {user[0]}\n"
-            f"🖼 Всего генераций: {user[2]}")
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+    if user:
+        text = (f"👤 *Ваш профиль*\n\n"
+                f"💰 Кредиты: {user[0]}\n"
+                f"🖼 Всего генераций: {user[2]}")
+        bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "👥 Рефералка")
 def referral(message):
@@ -104,14 +111,14 @@ def shop(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     prices = {"buy_5": 5, "buy_10": 10, "buy_25": 25, "buy_50": 50}
-    credits = {"buy_5": 5, "buy_10": 12, "buy_25": 35, "buy_50": 75}
+    credits_map = {"buy_5": 5, "buy_10": 12, "buy_25": 35, "buy_50": 75}
     
     amount = prices[call.data]
     bot.send_invoice(
         call.message.chat.id,
         title="Пополнение баланса",
-        description=f"Покупка {credits[call.data]} кредитов для генерации",
-        invoice_payload=f"pay_{credits[call.data]}",
+        description=f"Покупка {credits_map[call.data]} кредитов для генерации",
+        invoice_payload=f"pay_{credits_map[call.data]}",
         provider_token="", # Для Telegram Stars оставляем пустым
         currency="XTR",
         prices=[types.LabeledPrice(label="Кредиты", amount=amount)]
@@ -130,14 +137,14 @@ def got_payment(message):
 @bot.message_handler(func=lambda m: m.text == "🎨 Рисовать")
 def ask_prompt(message):
     user = get_user(message.from_user.id)
-    if user[0] <= 0:
+    if not user or user[0] <= 0:
         bot.send_message(message.chat.id, "❌ У вас закончились кредиты. Пригласите друга или купите попытки.")
         return
     msg = bot.send_message(message.chat.id, "Опишите, что вы хотите увидеть (на английском):", reply_markup=types.ForceReply())
     bot.register_next_step_handler(msg, process_generation)
 
 def process_generation(message):
-    if not message.text: return
+    if not message.text or message.text.startswith('/'): return
     user_id = message.from_user.id
     prompt = message.text
     
@@ -168,6 +175,8 @@ def process_generation(message):
     finally:
         bot.delete_message(message.chat.id, wait_msg.message_id)
 
+# --- АДМИН-КОМАНДЫ ---
+
 @bot.message_handler(commands=['stats'])
 def admin_stats(message):
     if message.from_user.id == ADMIN_ID:
@@ -178,6 +187,31 @@ def admin_stats(message):
         conn.close()
         bot.send_message(ADMIN_ID, f"📊 *Статистика бота*\n\n👤 Пользователей: {users_count}\n🖼 Всего генераций: {total_gen or 0}", parse_mode="Markdown")
 
+@bot.message_handler(commands=['add_credits'])
+def add_credits_command(message):
+    # Проверка на права админа
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "❌ Эта команда доступна только администратору.")
+        return
+
+    try:
+        # Формат: /add_credits ID количество
+        args = message.text.split()
+        if len(args) < 3:
+            bot.send_message(message.chat.id, "⚠️ Формат: `/add_credits 12345678 10`", parse_mode="Markdown")
+            return
+
+        target_id = int(args[1])
+        amount = int(args[2])
+
+        update_credits(target_id, amount)
+        bot.send_message(message.chat.id, f"✅ Добавлено {amount} кредитов пользователю `{target_id}`.", parse_mode="Markdown")
+        
+        # Уведомляем счастливчика
+        bot.send_message(target_id, f"🎁 Вам начислено {amount} бесплатных генераций! Пользуйтесь на здоровье.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+
 if __name__ == "__main__":
-    print("Бот запущен...")
+    print("Бот успешно запущен...")
     bot.infinity_polling()
