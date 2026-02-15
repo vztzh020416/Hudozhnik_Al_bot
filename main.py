@@ -4,7 +4,7 @@ import sqlite3
 from io import BytesIO
 from datetime import datetime
 
-TOKEN = "ВСТАВЬ_СВОЙ_ТОКЕН_СЮДА"
+TOKEN = "8543701615:AAEo5ZfovosRPNQqwn_QZVvqGkAzbjGLVB8"
 bot = telebot.TeleBot(TOKEN)
 
 def init_db():
@@ -39,5 +39,6 @@ def draw(message):
             bot.send_photo(message.chat.id, BytesIO(response.content))
     except:
         bot.reply_to(message, "😢 Ошибка")
+
 
 bot.polling()
