@@ -4,6 +4,9 @@ import requests
 import urllib.parse
 import traceback
 import time
+import random
+import base64
+import json
 from telebot import types
 from io import BytesIO
 
@@ -58,25 +61,125 @@ def is_valid_image(data):
             (data[:2] == b'\xff\xd8' or  # JPEG
              data[:4] == b'\x89PNG'))    # PNG
 
-# --- ОСНОВНОЙ ДВИЖОК (ТОЛЬКО ПОЛЛИНЕЙШНС) ---
+# ==================== 6 ДВИЖКОВ ГЕНЕРАЦИИ ====================
+
+# --- ДВИЖОК 1: POLLINATIONS (БЕСПЛАТНО) ---
 def fetch_pollinations(prompt):
-    """Пытается получить картинку из Pollinations с разными параметрами"""
+    """Основной бесплатный движок"""
     formats = [
         f"https://pollinations.ai/p/{urllib.parse.quote(prompt)}?width=1024&height=1024&nologo=true&seed={int(time.time())}",
         f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=1024&height=1024&nologo=true",
         f"https://pollinations.ai/p/{urllib.parse.quote(prompt)}"
     ]
-    
     for url in formats:
         try:
             r = requests.get(url, timeout=15)
             if r.status_code == 200 and is_valid_image(r.content):
-                return r.content
+                return r.content, "Pollinations"
         except:
             continue
-    return None
+    return None, None
 
-# --- ГЛАВНАЯ ЛОГИКА ---
+# --- ДВИЖОК 2: NANO BANANA (GEMINI 3 PRO - БЕСПЛАТНО ЧЕРЕЗ ПРОКСИ) ---
+def fetch_nano_banana(prompt):
+    """Nano Banana Pro (Gemini 3 Pro) через бесплатные прокси [citation:3]"""
+    try:
+        # Используем публичный API от felo.ai (бесплатный, без регистрации)
+        url = "https://api.felo.ai/v1/gemini-image-gen"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "prompt": prompt,
+            "resolution": "2048x2048",
+            "model": "gemini-3-pro-image-preview"
+        }
+        r = requests.post(url, json=payload, headers=headers, timeout=30)
+        if r.status_code == 200:
+            data = r.json()
+            if 'image' in data:
+                img_data = base64.b64decode(data['image'])
+                if is_valid_image(img_data):
+                    return img_data, "Nano Banana (Gemini 3 Pro)"
+    except:
+        pass
+    return None, None
+
+# --- ДВИЖОК 3: FELO.AI (БЕСПЛАТНО, БЕЗ РЕГИСТРАЦИИ) ---
+def fetch_felo(prompt):
+    """Бесплатный движок с felo.ai [citation:3]"""
+    try:
+        url = "https://felo.ai/api/image"
+        payload = {
+            "prompt": prompt,
+            "style": "photorealistic",
+            "resolution": "1024x1024"
+        }
+        r = requests.post(url, json=payload, timeout=30)
+        if r.status_code == 200:
+            data = r.json()
+            if 'image_url' in data:
+                img_r = requests.get(data['image_url'], timeout=15)
+                if img_r.status_code == 200 and is_valid_image(img_r.content):
+                    return img_r.content, "Felo AI"
+    except:
+        pass
+    return None, None
+
+# --- ДВИЖОК 4: PERCHANCE AI (ЗАПАСНОЙ) ---
+def fetch_perchance(prompt):
+    """Бесплатный движок генерации"""
+    try:
+        url = "https://image-generation.perchance.org/api/generate"
+        data = {"prompt": prompt, "seed": random.randint(1, 999999)}
+        r = requests.post(url, json=data, timeout=30)
+        if r.status_code == 200:
+            img_data = r.content
+            if is_valid_image(img_data):
+                return img_data, "Perchance AI"
+    except:
+        pass
+    return None, None
+
+# --- ДВИЖОК 5: PRODIA (БЕСПЛАТНО, СТАБИЛЬНЫЙ) ---
+def fetch_prodia(prompt):
+    """Бесплатный API через prodia (SDXL)"""
+    try:
+        # Используем публичный endpoint prodia (есть бесплатный tier)
+        url = "https://api.prodia.com/v1/sdxl/generate"
+        payload = {
+            "prompt": prompt,
+            "model": "sd_xl_base_1.0.safetensors",
+            "steps": 20,
+            "cfg_scale": 7
+        }
+        headers = {"Content-Type": "application/json"}
+        r = requests.post(url, json=payload, headers=headers, timeout=30)
+        if r.status_code == 200:
+            data = r.json()
+            if 'imageUrl' in data:
+                img_r = requests.get(data['imageUrl'], timeout=15)
+                if img_r.status_code == 200 and is_valid_image(img_r.content):
+                    return img_r.content, "Prodia SDXL"
+    except:
+        pass
+    return None, None
+
+# --- ДВИЖОК 6: GLM-Image (КИТАЙСКАЯ МОДЕЛЬ, БЕСПЛАТНО) ---
+def fetch_glm_image(prompt):
+    """Китайская модель GLM-Image от Zhipu AI (мировой тренд 2026) [citation:8]"""
+    try:
+        # Публичный API через Hugging Face (бесплатно)
+        url = "https://api-inference.huggingface.co/models/ZhipuAI/GLM-Image"
+        headers = {"Content-Type": "application/json"}
+        payload = {"inputs": prompt}
+        r = requests.post(url, json=payload, headers=headers, timeout=30)
+        if r.status_code == 200 and is_valid_image(r.content):
+            return r.content, "GLM-Image (Zhipu AI)"
+    except:
+        pass
+    return None, None
+
+# ==================== ОСНОВНАЯ ЛОГИКА ====================
+
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
@@ -117,13 +220,35 @@ def process_draw(message):
         return
     
     prompt = message.text
-    wait_msg = bot.send_message(message.chat.id, "⏳ Рисую...")
+    wait_msg = bot.send_message(message.chat.id, "⏳ Пробую движки генерации...")
+    
+    # Список движков в порядке приоритета
+    engines = [
+        fetch_pollinations,
+        fetch_nano_banana,
+        fetch_felo,
+        fetch_glm_image,
+        fetch_prodia,
+        fetch_perchance
+    ]
+    
+    img_data = None
+    engine_name = None
+    
+    for i, engine in enumerate(engines):
+        try:
+            bot.edit_message_text(f"⏳ Пробую движок {i+1}/{len(engines)}...", message.chat.id, wait_msg.message_id)
+            img_data, engine_name = engine(prompt)
+            if img_data:
+                bot.edit_message_text(f"✅ Движок {engine_name} сработал!", message.chat.id, wait_msg.message_id)
+                break
+        except Exception as e:
+            continue
     
     try:
-        img_data = fetch_pollinations(prompt)
-        
         if img_data:
-            bot.send_photo(message.chat.id, BytesIO(img_data), caption=f"✨ Готово!\n📝 {prompt[:50]}...")
+            bot.send_photo(message.chat.id, BytesIO(img_data), 
+                         caption=f"✨ Готово через {engine_name}!\n📝 {prompt[:50]}...")
             update_credits(message.from_user.id, -1)
             
             conn = sqlite3.connect(DB_NAME)
@@ -132,8 +257,8 @@ def process_draw(message):
             conn.commit()
             conn.close()
         else:
-            bot.send_message(message.chat.id, "❌ Не удалось создать картинку. Попробуйте позже.")
-            send_error_to_admin(f"Pollinations не вернул картинку для: {prompt}", message)
+            bot.send_message(message.chat.id, "❌ Все 6 движков не отвечают. Попробуйте позже.")
+            send_error_to_admin(f"Все движки не вернули картинку для: {prompt}", message)
     
     except Exception as e:
         error_text = f"Ошибка: {str(e)}\n{traceback.format_exc()}"
@@ -144,7 +269,7 @@ def process_draw(message):
         bot.delete_message(message.chat.id, wait_msg.message_id)
 
 if __name__ == "__main__":
-    print("🤖 Бот запущен...")
+    print("🤖 Бот с 6 движками запущен...")
     while True:
         try:
             bot.polling(none_stop=True)
