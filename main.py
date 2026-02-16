@@ -19,7 +19,8 @@ def send_error_to_admin(error_text, message=None):
         user_info = f"👤 User ID: {message.from_user.id}" if message else "Системная ошибка"
         full_log = f"🆘 *ОШИБКА В БОТЕ*\n\n{user_info}\n\n`{error_text[:3500]}`"
         bot.send_message(ADMIN_ID, full_log, parse_mode="Markdown")
-    except: pass
+    except:
+        pass
 
 # --- ИНИЦИАЛИЗАЦИЯ БД ---
 def init_db():
@@ -51,6 +52,12 @@ def update_credits(user_id, amount):
     conn.commit()
     conn.close()
 
+def is_valid_image(data):
+    """Проверяет, что данные - это настоящая картинка (JPEG или PNG)"""
+    return (len(data) > 5000 and 
+            (data[:2] == b'\xff\xd8' or  # JPEG
+             data[:4] == b'\x89PNG'))    # PNG
+
 # --- ОСНОВНОЙ ДВИЖОК (ТОЛЬКО ПОЛЛИНЕЙШНС) ---
 def fetch_pollinations(prompt):
     """Пытается получить картинку из Pollinations с разными параметрами"""
@@ -63,7 +70,7 @@ def fetch_pollinations(prompt):
     for url in formats:
         try:
             r = requests.get(url, timeout=15)
-            if r.status_code == 200 and len(r.content) > 1000:
+            if r.status_code == 200 and is_valid_image(r.content):
                 return r.content
         except:
             continue
@@ -129,7 +136,7 @@ def process_draw(message):
             send_error_to_admin(f"Pollinations не вернул картинку для: {prompt}", message)
     
     except Exception as e:
-        error_text = f"Ошибка: {str(e)}"
+        error_text = f"Ошибка: {str(e)}\n{traceback.format_exc()}"
         bot.send_message(message.chat.id, "❌ Техническая ошибка. Попробуйте позже.")
         send_error_to_admin(f"{error_text}\n\nPrompt: {prompt}", message)
     
