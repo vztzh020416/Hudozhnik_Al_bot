@@ -10,7 +10,7 @@ TOKEN = "8543701615:AAEo5ZfovosRPNQqwn_QZVvqGkAzbjGLVB8"
 ADMIN_ID = 1005217438
 DB_NAME = "users.db"
 
-# Французский прокси
+# Французский прокси (пример, можешь заменить на свой)
 PROXIES = {
     "http": "http://51.159.66.58:3128",
     "https": "http://51.159.66.58:3128"
@@ -34,7 +34,8 @@ bot = telebot.TeleBot(TOKEN)
 
 try:
     bot_username = bot.get_me().username
-except:
+except Exception as e:
+    print(f"Ошибка при запуске: {e}")
     bot_username = "Bot"
 
 # --- ИНИЦИАЛИЗАЦИЯ БД ---
@@ -63,13 +64,10 @@ def get_user(user_id):
 def register_user(user_id, ref_id=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-
     # ВСЕ НОВЫЕ ПОЛЬЗОВАТЕЛИ ПОЛУЧАЮТ 100 КРЕДИТОВ
     c.execute("INSERT OR IGNORE INTO users (user_id, credits, referrer_id) VALUES (?, 100, ?)", (user_id, ref_id))
-
     if ref_id and c.rowcount > 0:
         c.execute("UPDATE users SET credits = credits + 1 WHERE user_id = ?", (ref_id,))
-
     conn.commit()
     conn.close()
 
@@ -87,23 +85,30 @@ def main_menu():
     m.add("👥 Рефералка", "⭐ Купить попытки")
     return m
 
-# --- FALLBACK-ГЕНЕРАЦИЯ ---
+# --- FALLBACK-ГЕНЕРАЦИЯ С ВОЗВРАТОМ ОШИБКИ ---
 def generate_image(prompt: str):
     safe = urllib.parse.quote(prompt)
+    last_error = "нет ответа от сервисов"
 
     for idx, template in enumerate(GENERATORS, start=1):
         url = template.format(p=safe)
         try:
-            print(f"[GEN {idx}] {url}")
-            r = requests.get(url, timeout=90, proxies=PROXIES)
+            print(f"[GEN {idx}] Запрос: {url}")
+            # Делаем разумный timeout, чтобы не висело вечно
+            r = requests.get(url, timeout=40, proxies=PROXIES)
+
+            print(f"[GEN {idx}] Статус: {r.status_code} {r.reason}")
 
             if r.status_code == 200 and r.content and len(r.content) > 1000:
-                return r.content
+                return r.content, None
+            else:
+                last_error = f"HTTP {r.status_code} {r.reason}"
 
         except Exception as e:
-            print(f"[GEN {idx}] Ошибка: {e}")
+            last_error = f"{type(e).__name__}: {e}"
+            print(f"[GEN {idx}] Ошибка: {last_error}")
 
-    return None
+    return None, last_error
 
 # --- ОБРАБОТЧИКИ ---
 @bot.message_handler(commands=['start'])
@@ -132,6 +137,9 @@ def start(message):
 @bot.message_handler(func=lambda m: m.text == "👤 Профиль")
 def profile(message):
     u = get_user(message.from_user.id)
+    if not u:
+        bot.send_message(message.chat.id, "❌ Профиль не найден.")
+        return
     bot.send_message(
         message.chat.id,
         f"👤 *Ваш профиль*\n\n💰 Кредиты: {u[0]}\n🖼 Генераций: {u[2]}",
@@ -184,7 +192,7 @@ def paid(message):
 @bot.message_handler(func=lambda m: m.text == "🎨 Рисовать")
 def ask(message):
     u = get_user(message.from_user.id)
-    if u[0] <= 0:
+    if not u or u[0] <= 0:
         bot.send_message(message.chat.id, "❌ Нет кредитов.")
         return
 
@@ -192,18 +200,24 @@ def ask(message):
     bot.register_next_step_handler(msg, process)
 
 def process(message):
+    if not message.text or message.text.startswith('/'):
+        return
+
     prompt = message.text
     user_id = message.from_user.id
 
-    wait = bot.send_message(message.chat.id, "⏳ Генерация...")
+    wait = bot.send_message(message.chat.id, "⏳ Генерация... (до ~40 секунд)")
 
     try:
-        img = generate_image(prompt)
+        img, err = generate_image(prompt)
 
         if img:
-            bot.send_photo(message.chat.id, BytesIO(img),
-                           caption=f"📝 {prompt}\nСоздано в @{bot_username}",
-                           reply_markup=main_menu())
+            bot.send_photo(
+                message.chat.id,
+                BytesIO(img),
+                caption=f"📝 {prompt}\nСоздано в @{bot_username}",
+                reply_markup=main_menu()
+            )
 
             update_credits(user_id, -1)
 
@@ -213,10 +227,30 @@ def process(message):
             conn.commit()
             conn.close()
         else:
-            bot.send_message(message.chat.id, "❌ Все генераторы недоступны.")
+            # Показываем пользователю причину
+            bot.send_message(
+                message.chat.id,
+                f"❌ Генерация не удалась.\nПричина: {err or 'неизвестно'}"
+            )
+            # И шлём админу подробности
+            try:
+                bot.send_message(
+                    ADMIN_ID,
+                    f"⚠️ Ошибка генерации у пользователя {user_id}.\nПромпт: {prompt}\nОшибка: {err}"
+                )
+            except:
+                pass
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        err_text = f"{type(e).__name__}: {e}"
+        bot.send_message(message.chat.id, f"❌ Внутренняя ошибка: {err_text}")
+        try:
+            bot.send_message(
+                ADMIN_ID,
+                f"🔥 Внутренняя ошибка в process у {user_id}.\nПромпт: {prompt}\nОшибка: {err_text}"
+            )
+        except:
+            pass
 
     finally:
         try:
