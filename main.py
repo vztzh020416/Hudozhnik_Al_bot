@@ -24,7 +24,7 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY, 
-                  credits INTEGER DEFAULT 61, 
+                  credits INTEGER DEFAULT 57, 
                   referrer_id INTEGER,
                   total_gen INTEGER DEFAULT 0)''')
     conn.commit()
@@ -45,7 +45,7 @@ def register_user(user_id, ref_id=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     # УСТАНОВЛЕНО 57 КРЕДИТОВ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ
-    c.execute("INSERT OR IGNORE INTO users (user_id, credits, referrer_id) VALUES (?, ?, ?)", (user_id, 60, ref_id))
+    c.execute("INSERT OR IGNORE INTO users (user_id, credits, referrer_id) VALUES (?, ?, ?)", (user_id, 57, ref_id))
     if ref_id and c.rowcount > 0: 
         c.execute("UPDATE users SET credits = credits + 1 WHERE user_id = ?", (ref_id,))
     conn.commit()
@@ -212,6 +212,7 @@ def add_credits_command(message):
 if __name__ == "__main__":
     print("Бот успешно запущен...")
     bot.infinity_polling()
+
 
 
 
