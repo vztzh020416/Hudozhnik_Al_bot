@@ -185,3 +185,4 @@ def text_handler(m):
 if __name__ == "__main__":
     print(">>> БОТ ЗАПУЩЕН")
     bot.infinity_polling(skip_pending=True)
+
