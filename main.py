@@ -5,175 +5,154 @@ import urllib.parse
 from telebot import types
 from io import BytesIO
 
-# --- КОНФИГУРАЦИЯ ---
 TOKEN = "8543701615:AAEsc7fZp9ZREZkSVkIUQ7z4LznudgGqCAY"
 ADMIN_ID = 1005217438
 DB_NAME = "users.db"
 
 bot = telebot.TeleBot(TOKEN)
 
-try:
-    bot_username = bot.get_me().username
-except Exception as e:
-    print(f"Ошибка при запуске: {e}")
-    bot_username = "Bot"
-
-# --- ИНИЦИАЛИЗАЦИЯ БД ---
+# ---------- БД ----------
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            credits INTEGER DEFAULT 57,
-            referrer_id INTEGER,
-            total_gen INTEGER DEFAULT 0
-        )
+    CREATE TABLE IF NOT EXISTS users(
+        user_id INTEGER PRIMARY KEY,
+        credits INTEGER DEFAULT 57,
+        total_gen INTEGER DEFAULT 0
+    )
     """)
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- БД ---
-def get_user(user_id):
+def get_user(uid):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT credits, referrer_id, total_gen FROM users WHERE user_id = ?", (user_id,))
-    user = c.fetchone()
+    c.execute("SELECT credits,total_gen FROM users WHERE user_id=?", (uid,))
+    row = c.fetchone()
     conn.close()
-    return user
+    return row
 
-def register_user(user_id, ref_id=None):
+def add_user(uid):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute(
-        "INSERT OR IGNORE INTO users (user_id, credits, referrer_id) VALUES (?, ?, ?)",
-        (user_id, 57, ref_id)
-    )
-    if ref_id and c.rowcount > 0:
-        c.execute("UPDATE users SET credits = credits + 1 WHERE user_id = ?", (ref_id,))
+    c.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (uid,))
     conn.commit()
     conn.close()
 
-def update_credits(user_id, amount):
+def change_credits(uid, amount):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("UPDATE users SET credits = credits + ? WHERE user_id = ?", (amount, user_id))
+    c.execute("UPDATE users SET credits = credits + ? WHERE user_id=?", (amount,uid))
     conn.commit()
     conn.close()
 
-# --- UI ---
-def main_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🎨 Рисовать", "👤 Профиль")
-    markup.add("👥 Рефералка", "⭐ Купить попытки")
-    return markup
+# ---------- МЕНЮ ----------
+def menu():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("🎨 Рисовать")
+    kb.add("👤 Профиль","⭐ Купить")
+    return kb
 
-# --- START ---
+# ---------- START ----------
 @bot.message_handler(commands=['start'])
-def start(message):
-    user_id = message.from_user.id
-    args = message.text.split()
-    ref_id = None
-
-    if len(args) > 1 and args[1].isdigit():
-        ref_id = int(args[1])
-        if ref_id == user_id:
-            ref_id = None
-
-    register_user(user_id, ref_id)
-
+def start(m):
+    add_user(m.from_user.id)
     bot.send_message(
-        user_id,
-        "🎨 Привет! Я создаю шедевры с помощью ИИ.\nУ тебя есть 57 бесплатных попыток!",
-        reply_markup=main_menu()
+        m.chat.id,
+        "🎨 Бот генерации\nУ тебя 57 попыток",
+        reply_markup=menu()
     )
 
-# --- ПРОФИЛЬ ---
-@bot.message_handler(func=lambda m: m.text == "👤 Профиль")
-def profile(message):
-    user = get_user(message.from_user.id)
-    if user:
-        bot.send_message(
-            message.chat.id,
-            f"👤 Профиль\n\n💰 Кредиты: {user[0]}\n🖼 Генераций: {user[2]}"
-        )
-
-# --- РИСОВАТЬ ---
-@bot.message_handler(func=lambda m: m.text == "🎨 Рисовать")
-def ask_prompt(message):
-    user = get_user(message.from_user.id)
-
-    if not user or user[0] <= 0:
-        bot.send_message(message.chat.id, "❌ Нет кредитов")
-        return
-
-    msg = bot.send_message(
-        message.chat.id,
-        "Опиши картинку на английском:",
-        reply_markup=types.ForceReply()
+# ---------- ПРОФИЛЬ ----------
+@bot.message_handler(func=lambda m: m.text=="👤 Профиль")
+def profile(m):
+    u = get_user(m.from_user.id)
+    bot.send_message(
+        m.chat.id,
+        f"Кредиты: {u[0]}\nГенераций: {u[1]}",
+        reply_markup=menu()
     )
-    bot.register_next_step_handler(msg, process_generation)
 
-def process_generation(message):
-    if not message.text:
+# ---------- ПОКУПКА ----------
+@bot.message_handler(func=lambda m: m.text=="⭐ Купить")
+def buy(m):
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("10 ⭐ = 10", callback_data="buy10"))
+    kb.add(types.InlineKeyboardButton("50 ⭐ = 60", callback_data="buy50"))
+    bot.send_message(m.chat.id,"Покупка:",reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("buy"))
+def buy_cb(c):
+    if c.data=="buy10":
+        change_credits(c.from_user.id,10)
+        bot.send_message(c.message.chat.id,"Начислено 10")
+    if c.data=="buy50":
+        change_credits(c.from_user.id,60)
+        bot.send_message(c.message.chat.id,"Начислено 60")
+
+# ---------- ГЕНЕРАЦИЯ ----------
+@bot.message_handler(func=lambda m: m.text=="🎨 Рисовать")
+def draw(m):
+    u = get_user(m.from_user.id)
+    if u[0]<=0:
+        bot.send_message(m.chat.id,"Нет попыток",reply_markup=menu())
         return
 
-    user_id = message.from_user.id
-    prompt = message.text
+    msg = bot.send_message(m.chat.id,"Напиши запрос")
+    bot.register_next_step_handler(msg,gen)
 
-    wait_msg = bot.send_message(message.chat.id, "⏳ Генерация...")
+def gen(m):
+    uid = m.from_user.id
+    prompt = m.text
 
-    try:
-        safe_prompt = urllib.parse.quote(prompt)
-        url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true"
+    wait = bot.send_message(m.chat.id,"⏳ Генерация...")
 
-        response = requests.get(url, timeout=60)
+    img = try_generate(prompt, m.chat.id)
 
-        # --- ЛОГ В ТЕЛЕГРАМ ---
-        bot.send_message(
-            ADMIN_ID,
-            f"DEBUG\nStatus: {response.status_code}\nURL: {url}"
-        )
-
-        if response.status_code != 200:
-            bot.send_message(
-                message.chat.id,
-                f"❌ Ошибка API\nStatus: {response.status_code}"
-            )
-            return
-
-        if not response.content:
-            bot.send_message(message.chat.id, "❌ Пустой ответ от сервера")
-            return
-
+    if img:
         bot.send_photo(
-            message.chat.id,
-            BytesIO(response.content),
-            caption=f"📝 {prompt}"
+            m.chat.id,
+            img,
+            caption=prompt,
+            reply_markup=menu()
+        )
+        change_credits(uid,-1)
+    else:
+        bot.send_message(
+            m.chat.id,
+            "❌ Все сервисы умерли",
+            reply_markup=menu()
         )
 
-        update_credits(user_id, -1)
+    bot.delete_message(m.chat.id,wait.message_id)
 
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("UPDATE users SET total_gen = total_gen + 1 WHERE user_id = ?", (user_id,))
-        conn.commit()
-        conn.close()
+# ---------- MULTI API ----------
+def try_generate(prompt, chat_id):
 
-    except Exception as e:
-        # --- ОШИБКА В ТЕЛЕГРАМ ---
-        bot.send_message(message.chat.id, f"❌ Ошибка генерации:\n{e}")
-        bot.send_message(ADMIN_ID, f"ERROR:\n{e}")
+    safe = urllib.parse.quote(prompt)
 
-    finally:
+    apis = [
+        f"https://image.pollinations.ai/prompt/{safe}",
+        f"https://image.pollinations.ai/prompt/{safe}?model=flux",
+        f"https://image.pollinations.ai/prompt/{safe}?width=1024&height=1024",
+        f"https://stablehorde.net/generate/{safe}"
+    ]
+
+    for url in apis:
         try:
-            bot.delete_message(message.chat.id, wait_msg.message_id)
-        except:
-            pass
+            r = requests.get(url,timeout=40)
+            if r.status_code==200:
+                return BytesIO(r.content)
+            else:
+                bot.send_message(chat_id,f"⚠️ API ошибка {r.status_code}")
+        except Exception as e:
+            bot.send_message(chat_id,f"⚠️ API сбой {e}")
 
-# --- RUN ---
-if __name__ == "__main__":
-    print("Бот запущен")
-    bot.infinity_polling()
+    return None
+
+# ---------- RUN ----------
+print("BOT OK")
+bot.infinity_polling()
