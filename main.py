@@ -1,175 +1,162 @@
-import asyncio
-import logging
-import random
-import aiohttp
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.filters import CommandStart
+import telebot
+import sqlite3
+import requests
+import urllib.parse
+from telebot import types
+from io import BytesIO
 
+# ====== НАСТРОЙКИ ======
 TOKEN = "8543701615:AAEsc7fZp9ZREZkSVkIUQ7z4LznudgGqCAY"
+ADMIN_ID = 1005217438
+DB_NAME = "users.db"
 
-logging.basicConfig(level=logging.INFO)
+bot = telebot.TeleBot(TOKEN)
 
-bot = Bot(TOKEN)
-dp = Dispatcher()
-
-# ---------- ДАННЫЕ ----------
-users = {}
-ADMIN_ID = None
-
-# ---------- МЕНЮ ----------
-def menu(uid):
-    buttons = [
-        [KeyboardButton(text="🎨 Рисовать")],
-        [KeyboardButton(text="👤 Профиль"), KeyboardButton(text="⭐ Купить")]
-    ]
-    if uid == ADMIN_ID:
-        buttons.append([KeyboardButton(text="📊 Статистика")])
-
-    return ReplyKeyboardMarkup(
-        keyboard=buttons,
-        resize_keyboard=True
+# ====== БАЗА ======
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS users(
+        user_id INTEGER PRIMARY KEY,
+        credits INTEGER DEFAULT 10,
+        total_gen INTEGER DEFAULT 0
     )
+    """)
+    conn.commit()
+    conn.close()
 
-# ---------- БЕСПЛАТНЫЕ СЕРВИСЫ ----------
+init_db()
+
+def get_user(uid):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT credits,total_gen FROM users WHERE user_id=?", (uid,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def add_user(uid):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO users(user_id,credits) VALUES(?,10)", (uid,))
+    conn.commit()
+    conn.close()
+
+def add_credits(uid, amount):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE users SET credits=credits+? WHERE user_id=?", (amount, uid))
+    conn.commit()
+    conn.close()
+
+def add_gen(uid):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE users SET total_gen=total_gen+1 WHERE user_id=?", (uid,))
+    conn.commit()
+    conn.close()
+
+# ====== МЕНЮ ======
+def menu():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("🎨 Рисовать", "👤 Профиль")
+    kb.add("⭐ Купить", "📊 Статистика")
+    return kb
+
+# ====== СЕРВИСЫ ГЕНЕРАЦИИ ======
 SERVICES = [
-    "https://image.pollinations.ai/prompt/{prompt}",
-    "https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024",
-    "https://image.pollinations.ai/prompt/{prompt}?nologo=true",
-    "https://image.pollinations.ai/prompt/{prompt}?model=flux",
-    "https://image.pollinations.ai/prompt/{prompt}?model=turbo",
-    "https://image.pollinations.ai/prompt/{prompt}?enhance=true",
-    "https://image.pollinations.ai/prompt/{prompt}?style=anime",
-    "https://image.pollinations.ai/prompt/{prompt}?style=realistic",
-    "https://image.pollinations.ai/prompt/{prompt}?seed=1",
-    "https://image.pollinations.ai/prompt/{prompt}?seed=2",
+    "https://image.pollinations.ai/prompt/{p}?width=1024&height=1024",
+    "https://image.pollinations.ai/prompt/{p}?width=768&height=768",
+    "https://image.pollinations.ai/prompt/{p}",
+    "https://image.pollinations.ai/prompt/{p}?nologo=true",
+    "https://image.pollinations.ai/prompt/{p}?width=512&height=512"
 ]
 
-# ---------- ПОЛЬЗОВАТЕЛЬ ----------
-def add_user(uid):
-    if uid not in users:
-        users[uid] = {"credits": 5, "gen": 0}
-
-# ---------- СТАРТ ----------
-@dp.message(CommandStart())
-async def start(msg: Message):
-    global ADMIN_ID
-    uid = msg.from_user.id
-    add_user(uid)
-
-    if ADMIN_ID is None:
-        ADMIN_ID = uid
-
-    await msg.answer(
-        "🎨 Бот генерации изображений\n"
-        f"У тебя {users[uid]['credits']} попыток",
-        reply_markup=menu(uid)
+# ====== СТАРТ ======
+@bot.message_handler(commands=['start'])
+def start(msg):
+    add_user(msg.from_user.id)
+    bot.send_message(msg.chat.id,
+        "🎨 Бот генерации изображений\nУ тебя 10 бесплатных попыток",
+        reply_markup=menu()
     )
 
-# ---------- ПРОФИЛЬ ----------
-@dp.message(F.text == "👤 Профиль")
-async def profile(msg: Message):
-    uid = msg.from_user.id
-    add_user(uid)
-    u = users[uid]
-
-    await msg.answer(
-        f"👤 Профиль\n"
-        f"Кредиты: {u['credits']}\n"
-        f"Генераций: {u['gen']}",
-        reply_markup=menu(uid)
-    )
-
-# ---------- ПОКУПКА ----------
-@dp.message(F.text == "⭐ Купить")
-async def buy(msg: Message):
-    uid = msg.from_user.id
-    add_user(uid)
-
-    users[uid]["credits"] += 10
-
-    await msg.answer(
-        "⭐ Начислено +10 кредитов",
-        reply_markup=menu(uid)
-    )
-
-# ---------- СТАТИСТИКА ----------
-@dp.message(F.text == "📊 Статистика")
-async def stat(msg: Message):
-    uid = msg.from_user.id
-    if uid != ADMIN_ID:
+# ====== ПРОФИЛЬ ======
+@bot.message_handler(func=lambda m: m.text=="👤 Профиль")
+def profile(msg):
+    u = get_user(msg.from_user.id)
+    if not u:
         return
-
-    total_users = len(users)
-    total_gen = sum(u["gen"] for u in users.values())
-
-    await msg.answer(
-        f"📊 Статистика\n"
-        f"Пользователей: {total_users}\n"
-        f"Генераций: {total_gen}",
-        reply_markup=menu(uid)
+    bot.send_message(
+        msg.chat.id,
+        f"👤 Профиль\n\nКредиты: {u[0]}\nГенераций: {u[1]}",
+        reply_markup=menu()
     )
 
-# ---------- РИСОВАТЬ ----------
-@dp.message(F.text == "🎨 Рисовать")
-async def draw(msg: Message):
-    await msg.answer(
-        "Напиши запрос (например: cat, car, house)",
-        reply_markup=menu(msg.from_user.id)
+# ====== АДМИН СТАТ ======
+@bot.message_handler(func=lambda m: m.text=="📊 Статистика")
+def stats(msg):
+    if msg.from_user.id != ADMIN_ID:
+        return
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    users = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    gens = c.execute("SELECT SUM(total_gen) FROM users").fetchone()[0]
+    conn.close()
+    bot.send_message(
+        msg.chat.id,
+        f"📊 Статистика\nПользователей: {users}\nГенераций: {gens or 0}",
+        reply_markup=menu()
     )
 
-# ---------- ГЕНЕРАЦИЯ ----------
-@dp.message()
-async def generate(msg: Message):
+# ====== КУПИТЬ (БЕСПЛАТНО) ======
+@bot.message_handler(func=lambda m: m.text=="⭐ Купить")
+def buy(msg):
+    add_credits(msg.from_user.id, 10)
+    bot.send_message(
+        msg.chat.id,
+        "🎁 Тебе добавлено 10 попыток бесплатно",
+        reply_markup=menu()
+    )
+
+# ====== РИСОВАТЬ ======
+@bot.message_handler(func=lambda m: m.text=="🎨 Рисовать")
+def draw(msg):
+    u = get_user(msg.from_user.id)
+    if not u or u[0] <= 0:
+        bot.send_message(msg.chat.id,"❌ Нет попыток", reply_markup=menu())
+        return
+    m = bot.send_message(msg.chat.id,"Напиши запрос")
+    bot.register_next_step_handler(m, gen)
+
+def gen(msg):
     uid = msg.from_user.id
-    add_user(uid)
+    prompt = msg.text
+    safe = urllib.parse.quote(prompt)
 
-    if msg.text.startswith("/"):
-        return
+    bot.send_message(msg.chat.id,"⏳ Генерация...")
 
-    if msg.text in ["🎨 Рисовать", "👤 Профиль", "⭐ Купить", "📊 Статистика"]:
-        return
+    for url in SERVICES:
+        try:
+            r = requests.get(url.format(p=safe), timeout=30)
+            if r.status_code == 200 and r.content:
+                bot.send_photo(
+                    msg.chat.id,
+                    BytesIO(r.content),
+                    caption=prompt,
+                    reply_markup=menu()
+                )
+                add_credits(uid, -1)
+                add_gen(uid)
+                return
+            else:
+                bot.send_message(msg.chat.id,f"⚠️ Ошибка сервиса: {r.status_code}")
+        except Exception as e:
+            bot.send_message(msg.chat.id,f"⚠️ {e}")
 
-    if users[uid]["credits"] <= 0:
-        await msg.answer("❌ Нет кредитов", reply_markup=menu(uid))
-        return
+    bot.send_message(msg.chat.id,"❌ Все сервисы недоступны", reply_markup=menu())
 
-    prompt = msg.text.replace(" ", "%20")
-
-    errors = []
-
-    async with aiohttp.ClientSession() as session:
-        for url in SERVICES:
-            link = url.format(prompt=prompt)
-
-            try:
-                async with session.get(link, timeout=30) as r:
-                    if r.status == 200:
-                        img = await r.read()
-                        if len(img) > 1000:
-                            users[uid]["credits"] -= 1
-                            users[uid]["gen"] += 1
-                            await msg.answer_photo(
-                                img,
-                                caption="✅ Готово",
-                                reply_markup=menu(uid)
-                            )
-                            return
-                        else:
-                            errors.append("пусто")
-                    else:
-                        errors.append(str(r.status))
-            except Exception as e:
-                errors.append(str(e))
-
-    await msg.answer(
-        "❌ Все сервисы не ответили\n"
-        + "\n".join(errors[:5]),
-        reply_markup=menu(uid)
-    )
-
-# ---------- ЗАПУСК ----------
-async def main():
-    await dp.start_polling(bot)
-
-asyncio.run(main())
+# ====== ЗАПУСК ======
+print("BOT START")
+bot.infinity_polling()
