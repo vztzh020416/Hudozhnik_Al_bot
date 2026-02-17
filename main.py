@@ -5,6 +5,7 @@ import sqlite3
 import time
 import random
 
+# ВСТАВЬ СВОЙ ТОКЕН СЮДА
 BOT_TOKEN = "8543701615:AAEsc7fZp9ZREZkSVkIUQ7z4LznudgGqCAY"
 ADMIN_ID = 1005217438
 
@@ -31,6 +32,7 @@ def get_credits(uid):
     r = cur.fetchone()
     if r:
         return r[0]
+    # Если пользователя нет, он автоматически попадает в счётчик (базу)
     cur.execute("INSERT INTO users(id,credits) VALUES(?,5)", (uid,))
     conn.commit()
     return 5
@@ -43,7 +45,7 @@ def sub_credit(uid):
     cur.execute("UPDATE users SET credits=credits-1 WHERE id=?", (uid,))
     conn.commit()
 
-# ---------- СЧЕТЧИК ПОЛЬЗОВАТЕЛЕЙ ----------
+# ---------- СЧЕТЧИК ПОЛЬЗОВАТЕЛЕЙ (ДЛЯ АДМИНА) ----------
 def users_count():
     cur.execute("SELECT COUNT(*) FROM users")
     return cur.fetchone()[0]
@@ -94,7 +96,7 @@ def generate(prompt):
 @bot.message_handler(commands=["start"])
 def start(m):
     uid = m.from_user.id
-    get_credits(uid)
+    get_credits(uid) # Регистрация в базе
     bot.send_message(uid,
         "🎨 <b>AI Художник</b>\n\n"
         "Напиши описание картинки\n"
@@ -103,12 +105,14 @@ def start(m):
         reply_markup=menu()
     )
 
-# ---------- СТАТИСТИКА (АДМИН) ----------
+# ---------- СТАТИСТИКА (ТОЛЬКО ДЛЯ АДМИНА) ----------
 @bot.message_handler(commands=["stats"])
 def stats(m):
     if m.from_user.id == ADMIN_ID:
+        count = users_count()
         bot.send_message(m.chat.id,
-            f"👥 Пользователей: {users_count()}",
+            f"📊 <b>Статистика бота</b>\n\n"
+            f"👥 Всего пользователей: <b>{count}</b>",
             reply_markup=menu()
         )
 
@@ -116,7 +120,7 @@ def stats(m):
 @bot.message_handler(func=lambda m: m.text=="💰 Баланс")
 def balance(m):
     c = get_credits(m.from_user.id)
-    bot.send_message(m.chat.id, f"💰 Картинок: {c}", reply_markup=menu())
+    bot.send_message(m.chat.id, f"💰 Картинок осталось: {c}", reply_markup=menu())
 
 # ---------- КУПИТЬ ----------
 @bot.message_handler(func=lambda m: m.text=="⭐ Купить")
@@ -128,41 +132,44 @@ def buy(m):
 @bot.message_handler(func=lambda m: m.text=="🎨 Создать")
 def create(m):
     bot.send_message(m.chat.id,
-        "✏ Напиши описание картинки",
+        "✏ Напиши описание картинки (можно по-русски или по-английски)",
         reply_markup=menu()
     )
 
-# ---------- ТЕКСТ ----------
+# ---------- ОБРАБОТКА ТЕКСТА ----------
 @bot.message_handler(func=lambda m: True)
-def text(m):
+def text_handler(m):
     uid = m.from_user.id
 
+    # Игнорируем нажатия кнопок меню, если они попали сюда
     if m.text in ["🎨 Создать","💰 Баланс","⭐ Купить"]:
         return
 
     credits = get_credits(uid)
 
     if credits <= 0:
-        bot.send_message(uid,"❌ Нет картинок",reply_markup=menu())
+        bot.send_message(uid,"❌ У вас закончились картинки. Нажмите '⭐ Купить', чтобы пополнить.", reply_markup=menu())
         return
 
-    msg = bot.send_message(uid,"⏳ Генерация...")
+    msg = bot.send_message(uid,"⏳ <b>Генерация началась...</b>", parse_mode="HTML")
 
     try:
         img = generate(m.text)
 
         if not img:
-            bot.edit_message_text("❌ Все сервисы недоступны", uid, msg.message_id)
+            bot.edit_message_text("❌ Сейчас все ИИ-сервисы заняты. Попробуйте другой запрос.", uid, msg.message_id)
             return
 
         sub_credit(uid)
 
         bot.delete_message(uid, msg.message_id)
-        bot.send_photo(uid, img, caption="✅ Готово", reply_markup=menu())
+        bot.send_photo(uid, img, caption="✅ <b>Ваша картинка готова!</b>", reply_markup=menu())
 
     except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка:\n{e}", uid, msg.message_id)
+        bot.edit_message_text(f"❌ Произошла ошибка:\n<code>{e}</code>", uid, msg.message_id)
 
-# ---------- СТАРТ ----------
-print("BOT STARTED")
-bot.infinity_polling()
+# ---------- ЗАПУСК ----------
+if __name__ == "__main__":
+    print(">>> БОТ ЗАПУЩЕН")
+    # skip_pending=True критически важен, чтобы избежать ошибки 409
+    bot.infinity_polling(skip_pending=True)
