@@ -1,158 +1,175 @@
-import telebot
-import sqlite3
-import requests
-import urllib.parse
-from telebot import types
-from io import BytesIO
+import asyncio
+import logging
+import random
+import aiohttp
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.filters import CommandStart
 
 TOKEN = "8543701615:AAEsc7fZp9ZREZkSVkIUQ7z4LznudgGqCAY"
-ADMIN_ID = 1005217438
-DB_NAME = "users.db"
 
-bot = telebot.TeleBot(TOKEN)
+logging.basicConfig(level=logging.INFO)
 
-# ---------- БД ----------
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-        user_id INTEGER PRIMARY KEY,
-        credits INTEGER DEFAULT 57,
-        total_gen INTEGER DEFAULT 0
-    )
-    """)
-    conn.commit()
-    conn.close()
+bot = Bot(TOKEN)
+dp = Dispatcher()
 
-init_db()
-
-def get_user(uid):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT credits,total_gen FROM users WHERE user_id=?", (uid,))
-    row = c.fetchone()
-    conn.close()
-    return row
-
-def add_user(uid):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (uid,))
-    conn.commit()
-    conn.close()
-
-def change_credits(uid, amount):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE users SET credits = credits + ? WHERE user_id=?", (amount,uid))
-    conn.commit()
-    conn.close()
+# ---------- ДАННЫЕ ----------
+users = {}
+ADMIN_ID = None
 
 # ---------- МЕНЮ ----------
-def menu():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("🎨 Рисовать")
-    kb.add("👤 Профиль","⭐ Купить")
-    return kb
+def menu(uid):
+    buttons = [
+        [KeyboardButton(text="🎨 Рисовать")],
+        [KeyboardButton(text="👤 Профиль"), KeyboardButton(text="⭐ Купить")]
+    ]
+    if uid == ADMIN_ID:
+        buttons.append([KeyboardButton(text="📊 Статистика")])
 
-# ---------- START ----------
-@bot.message_handler(commands=['start'])
-def start(m):
-    add_user(m.from_user.id)
-    bot.send_message(
-        m.chat.id,
-        "🎨 Бот генерации\nУ тебя 57 попыток",
-        reply_markup=menu()
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True
+    )
+
+# ---------- БЕСПЛАТНЫЕ СЕРВИСЫ ----------
+SERVICES = [
+    "https://image.pollinations.ai/prompt/{prompt}",
+    "https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024",
+    "https://image.pollinations.ai/prompt/{prompt}?nologo=true",
+    "https://image.pollinations.ai/prompt/{prompt}?model=flux",
+    "https://image.pollinations.ai/prompt/{prompt}?model=turbo",
+    "https://image.pollinations.ai/prompt/{prompt}?enhance=true",
+    "https://image.pollinations.ai/prompt/{prompt}?style=anime",
+    "https://image.pollinations.ai/prompt/{prompt}?style=realistic",
+    "https://image.pollinations.ai/prompt/{prompt}?seed=1",
+    "https://image.pollinations.ai/prompt/{prompt}?seed=2",
+]
+
+# ---------- ПОЛЬЗОВАТЕЛЬ ----------
+def add_user(uid):
+    if uid not in users:
+        users[uid] = {"credits": 5, "gen": 0}
+
+# ---------- СТАРТ ----------
+@dp.message(CommandStart())
+async def start(msg: Message):
+    global ADMIN_ID
+    uid = msg.from_user.id
+    add_user(uid)
+
+    if ADMIN_ID is None:
+        ADMIN_ID = uid
+
+    await msg.answer(
+        "🎨 Бот генерации изображений\n"
+        f"У тебя {users[uid]['credits']} попыток",
+        reply_markup=menu(uid)
     )
 
 # ---------- ПРОФИЛЬ ----------
-@bot.message_handler(func=lambda m: m.text=="👤 Профиль")
-def profile(m):
-    u = get_user(m.from_user.id)
-    bot.send_message(
-        m.chat.id,
-        f"Кредиты: {u[0]}\nГенераций: {u[1]}",
-        reply_markup=menu()
+@dp.message(F.text == "👤 Профиль")
+async def profile(msg: Message):
+    uid = msg.from_user.id
+    add_user(uid)
+    u = users[uid]
+
+    await msg.answer(
+        f"👤 Профиль\n"
+        f"Кредиты: {u['credits']}\n"
+        f"Генераций: {u['gen']}",
+        reply_markup=menu(uid)
     )
 
 # ---------- ПОКУПКА ----------
-@bot.message_handler(func=lambda m: m.text=="⭐ Купить")
-def buy(m):
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("10 ⭐ = 10", callback_data="buy10"))
-    kb.add(types.InlineKeyboardButton("50 ⭐ = 60", callback_data="buy50"))
-    bot.send_message(m.chat.id,"Покупка:",reply_markup=kb)
+@dp.message(F.text == "⭐ Купить")
+async def buy(msg: Message):
+    uid = msg.from_user.id
+    add_user(uid)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("buy"))
-def buy_cb(c):
-    if c.data=="buy10":
-        change_credits(c.from_user.id,10)
-        bot.send_message(c.message.chat.id,"Начислено 10")
-    if c.data=="buy50":
-        change_credits(c.from_user.id,60)
-        bot.send_message(c.message.chat.id,"Начислено 60")
+    users[uid]["credits"] += 10
 
-# ---------- ГЕНЕРАЦИЯ ----------
-@bot.message_handler(func=lambda m: m.text=="🎨 Рисовать")
-def draw(m):
-    u = get_user(m.from_user.id)
-    if u[0]<=0:
-        bot.send_message(m.chat.id,"Нет попыток",reply_markup=menu())
+    await msg.answer(
+        "⭐ Начислено +10 кредитов",
+        reply_markup=menu(uid)
+    )
+
+# ---------- СТАТИСТИКА ----------
+@dp.message(F.text == "📊 Статистика")
+async def stat(msg: Message):
+    uid = msg.from_user.id
+    if uid != ADMIN_ID:
         return
 
-    msg = bot.send_message(m.chat.id,"Напиши запрос")
-    bot.register_next_step_handler(msg,gen)
+    total_users = len(users)
+    total_gen = sum(u["gen"] for u in users.values())
 
-def gen(m):
-    uid = m.from_user.id
-    prompt = m.text
+    await msg.answer(
+        f"📊 Статистика\n"
+        f"Пользователей: {total_users}\n"
+        f"Генераций: {total_gen}",
+        reply_markup=menu(uid)
+    )
 
-    wait = bot.send_message(m.chat.id,"⏳ Генерация...")
+# ---------- РИСОВАТЬ ----------
+@dp.message(F.text == "🎨 Рисовать")
+async def draw(msg: Message):
+    await msg.answer(
+        "Напиши запрос (например: cat, car, house)",
+        reply_markup=menu(msg.from_user.id)
+    )
 
-    img = try_generate(prompt, m.chat.id)
+# ---------- ГЕНЕРАЦИЯ ----------
+@dp.message()
+async def generate(msg: Message):
+    uid = msg.from_user.id
+    add_user(uid)
 
-    if img:
-        bot.send_photo(
-            m.chat.id,
-            img,
-            caption=prompt,
-            reply_markup=menu()
-        )
-        change_credits(uid,-1)
-    else:
-        bot.send_message(
-            m.chat.id,
-            "❌ Все сервисы умерли",
-            reply_markup=menu()
-        )
+    if msg.text.startswith("/"):
+        return
 
-    bot.delete_message(m.chat.id,wait.message_id)
+    if msg.text in ["🎨 Рисовать", "👤 Профиль", "⭐ Купить", "📊 Статистика"]:
+        return
 
-# ---------- MULTI API ----------
-def try_generate(prompt, chat_id):
+    if users[uid]["credits"] <= 0:
+        await msg.answer("❌ Нет кредитов", reply_markup=menu(uid))
+        return
 
-    safe = urllib.parse.quote(prompt)
+    prompt = msg.text.replace(" ", "%20")
 
-    apis = [
-        f"https://image.pollinations.ai/prompt/{safe}",
-        f"https://image.pollinations.ai/prompt/{safe}?model=flux",
-        f"https://image.pollinations.ai/prompt/{safe}?width=1024&height=1024",
-        f"https://stablehorde.net/generate/{safe}"
-    ]
+    errors = []
 
-    for url in apis:
-        try:
-            r = requests.get(url,timeout=40)
-            if r.status_code==200:
-                return BytesIO(r.content)
-            else:
-                bot.send_message(chat_id,f"⚠️ API ошибка {r.status_code}")
-        except Exception as e:
-            bot.send_message(chat_id,f"⚠️ API сбой {e}")
+    async with aiohttp.ClientSession() as session:
+        for url in SERVICES:
+            link = url.format(prompt=prompt)
 
-    return None
+            try:
+                async with session.get(link, timeout=30) as r:
+                    if r.status == 200:
+                        img = await r.read()
+                        if len(img) > 1000:
+                            users[uid]["credits"] -= 1
+                            users[uid]["gen"] += 1
+                            await msg.answer_photo(
+                                img,
+                                caption="✅ Готово",
+                                reply_markup=menu(uid)
+                            )
+                            return
+                        else:
+                            errors.append("пусто")
+                    else:
+                        errors.append(str(r.status))
+            except Exception as e:
+                errors.append(str(e))
 
-# ---------- RUN ----------
-print("BOT OK")
-bot.infinity_polling()
+    await msg.answer(
+        "❌ Все сервисы не ответили\n"
+        + "\n".join(errors[:5]),
+        reply_markup=menu(uid)
+    )
+
+# ---------- ЗАПУСК ----------
+async def main():
+    await dp.start_polling(bot)
+
+asyncio.run(main())
