@@ -6,7 +6,7 @@ import time
 import random
 
 # ⚠️ ВСТАВЬТЕ СЮДА НОВЫЙ ТОКЕН (старый скомпрометирован!)
-BOT_TOKEN = "ВАШ_НОВЫЙ_ТОКЕН_ОТ_BOTFATHER"
+BOT_TOKEN = "8543701615:AAEsc7fZp9ZREZkSVkIUQ7z4LznudgGqCAY"
 ADMIN_ID = 1005217438  # Убедитесь, что это ваш ID
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
@@ -176,3 +176,4 @@ if __name__ == "__main__":
     print(">>> БОТ ЗАПУЩЕН")
     # skip_pending=True критически важен, чтобы избежать ошибки 409
     bot.infinity_polling(skip_pending=True)
+
