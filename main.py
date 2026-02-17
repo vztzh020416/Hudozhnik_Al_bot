@@ -7,7 +7,7 @@ import random
 
 # ⚠️ ВСТАВЬТЕ СЮДА НОВЫЙ ТОКЕН (старый скомпрометирован!)
 BOT_TOKEN = "8543701615:AAEsc7fZp9ZREZkSVkIUQ7z4LznudgGqCAY"
-ADMIN_ID = 1005217438  # Убедитесь, что это ваш ID
+ADMIN_ID = 1005217438
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
@@ -32,7 +32,6 @@ def get_credits(uid):
     r = cur.fetchone()
     if r:
         return r[0]
-    # Если пользователя нет, он автоматически попадает в счётчик (базу)
     cur.execute("INSERT INTO users(id,credits) VALUES(?,5)", (uid,))
     conn.commit()
     return 5
@@ -45,7 +44,7 @@ def sub_credit(uid):
     cur.execute("UPDATE users SET credits=credits-1 WHERE id=?", (uid,))
     conn.commit()
 
-# ---------- СЧЕТЧИК ПОЛЬЗОВАТЕЛЕЙ (ДЛЯ АДМИНА) ----------
+# ---------- СЧЕТЧИК ПОЛЬЗОВАТЕЛЕЙ ----------
 def users_count():
     cur.execute("SELECT COUNT(*) FROM users")
     return cur.fetchone()[0]
@@ -55,6 +54,7 @@ def menu():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add("🎨 Создать", "💰 Баланс")
     m.add("⭐ Купить")
+    m.add("📊 Статистика")  # <--- ДОБАВИЛ КНОПКУ СЮДА
     return m
 
 # ---------- СЕРВИСЫ ----------
@@ -96,7 +96,7 @@ def generate(prompt):
 @bot.message_handler(commands=["start"])
 def start(m):
     uid = m.from_user.id
-    get_credits(uid) # Регистрация в базе
+    get_credits(uid)
     bot.send_message(uid,
         "🎨 <b>AI Художник</b>\n\n"
         "Напиши описание картинки\n"
@@ -105,9 +105,20 @@ def start(m):
         reply_markup=menu()
     )
 
-# ---------- СТАТИСТИКА (ТОЛЬКО ДЛЯ АДМИНА) ----------
+# ---------- СТАТИСТИКА (КОМАНДА /stats) ----------
 @bot.message_handler(commands=["stats"])
-def stats(m):
+def stats_cmd(m):
+    if m.from_user.id == ADMIN_ID:
+        count = users_count()
+        bot.send_message(m.chat.id,
+            f"📊 <b>Статистика бота</b>\n\n"
+            f"👥 Всего пользователей: <b>{count}</b>",
+            reply_markup=menu()
+        )
+
+# ---------- СТАТИСТИКА (КНОПКА В МЕНЮ) ----------
+@bot.message_handler(func=lambda m: m.text == "📊 Статистика")
+def stats_btn(m):
     if m.from_user.id == ADMIN_ID:
         count = users_count()
         bot.send_message(m.chat.id,
@@ -116,8 +127,7 @@ def stats(m):
             reply_markup=menu()
         )
     else:
-        # Если команду ввел не админ, можно ничего не отвечать или написать ошибку
-        pass 
+        bot.send_message(m.chat.id, "❌ Доступ запрещен. Это меню только для админа.", reply_markup=menu())
 
 # ---------- БАЛАНС ----------
 @bot.message_handler(func=lambda m: m.text=="💰 Баланс")
@@ -144,8 +154,8 @@ def create(m):
 def text_handler(m):
     uid = m.from_user.id
 
-    # Игнорируем нажатия кнопок меню, если они попали сюда
-    if m.text in ["🎨 Создать","💰 Баланс","⭐ Купить"]:
+    # Игнорируем нажатия кнопок меню (добавил Статистику в список)
+    if m.text in ["🎨 Создать","💰 Баланс","⭐ Купить", "📊 Статистика"]:
         return
 
     credits = get_credits(uid)
@@ -174,6 +184,4 @@ def text_handler(m):
 # ---------- ЗАПУСК ----------
 if __name__ == "__main__":
     print(">>> БОТ ЗАПУЩЕН")
-    # skip_pending=True критически важен, чтобы избежать ошибки 409
     bot.infinity_polling(skip_pending=True)
-
