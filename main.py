@@ -5,7 +5,7 @@ from telebot import types
 from io import BytesIO
 
 # ================= CONFIG =================
-TOKEN = "TELEGRAM_BOT_TOKEN"
+TOKEN = "8543701615:AAEo5ZfovosRPNQqwn_QZVvqGkAzbjGLVB8"
 OPENAI_API_KEY = "OPENAI_API_KEY"
 ADMIN_ID = 1005217438
 DB_NAME = "users.db"
@@ -200,3 +200,4 @@ def stats(message):
 # ================= RUN =================
 print("BOT STARTED")
 bot.infinity_polling()
+
