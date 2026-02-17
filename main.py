@@ -1,162 +1,153 @@
 import telebot
 import sqlite3
 import requests
+import random
+import time
 import urllib.parse
 from telebot import types
 from io import BytesIO
 
-# ====== НАСТРОЙКИ ======
 TOKEN = "8543701615:AAEsc7fZp9ZREZkSVkIUQ7z4LznudgGqCAY"
 ADMIN_ID = 1005217438
-DB_NAME = "users.db"
 
 bot = telebot.TeleBot(TOKEN)
 
-# ====== БАЗА ======
+try:
+    bot_username = bot.get_me().username
+except:
+    bot_username = "bot"
+
+DB = "users.db"
+
+def db():
+    return sqlite3.connect(DB)
+
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-        user_id INTEGER PRIMARY KEY,
-        credits INTEGER DEFAULT 10,
-        total_gen INTEGER DEFAULT 0
-    )
-    """)
-    conn.commit()
-    conn.close()
+    c = db().cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY,
+        credits INTEGER DEFAULT 57,
+        total INTEGER DEFAULT 0
+    )""")
+    db().commit()
 
 init_db()
 
 def get_user(uid):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT credits,total_gen FROM users WHERE user_id=?", (uid,))
-    row = c.fetchone()
-    conn.close()
-    return row
+    c = db().cursor()
+    r = c.execute("SELECT credits,total FROM users WHERE id=?",(uid,)).fetchone()
+    return r
 
 def add_user(uid):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users(user_id,credits) VALUES(?,10)", (uid,))
-    conn.commit()
-    conn.close()
+    c = db().cursor()
+    c.execute("INSERT OR IGNORE INTO users(id) VALUES(?)",(uid,))
+    db().commit()
 
-def add_credits(uid, amount):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE users SET credits=credits+? WHERE user_id=?", (amount, uid))
-    conn.commit()
-    conn.close()
+def add_credits(uid,n):
+    c = db().cursor()
+    c.execute("UPDATE users SET credits=credits+? WHERE id=?",(n,uid))
+    db().commit()
 
-def add_gen(uid):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE users SET total_gen=total_gen+1 WHERE user_id=?", (uid,))
-    conn.commit()
-    conn.close()
+def use_credit(uid):
+    c = db().cursor()
+    c.execute("UPDATE users SET credits=credits-1,total=total+1 WHERE id=?",(uid,))
+    db().commit()
 
-# ====== МЕНЮ ======
 def menu():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("🎨 Рисовать", "👤 Профиль")
-    kb.add("⭐ Купить", "📊 Статистика")
-    return kb
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    m.add("🎨 Рисовать","👤 Профиль")
+    m.add("⭐ Купить")
+    if ADMIN_ID:
+        m.add("📊 Статистика")
+    return m
 
-# ====== СЕРВИСЫ ГЕНЕРАЦИИ ======
-SERVICES = [
-    "https://image.pollinations.ai/prompt/{p}?width=1024&height=1024",
-    "https://image.pollinations.ai/prompt/{p}?width=768&height=768",
-    "https://image.pollinations.ai/prompt/{p}",
-    "https://image.pollinations.ai/prompt/{p}?nologo=true",
-    "https://image.pollinations.ai/prompt/{p}?width=512&height=512"
+SERVERS = [
+
+"https://image.pollinations.ai/prompt/{p}?width=1024&height=1024&seed={s}&nocache={r}",
+"https://image.pollinations.ai/prompt/{p}?seed={s}&random={r}",
+"https://image.pollinations.ai/prompt/{p}?style=realistic&seed={s}&r={r}",
+"https://image.pollinations.ai/prompt/{p}?style=cinematic&seed={s}&r={r}",
+
+"https://image.pollinations.ai/prompt/{p}?style=anime&seed={s}&r={r}",
+"https://image.pollinations.ai/prompt/{p}?style=photo&seed={s}&r={r}",
+"https://image.pollinations.ai/prompt/{p}?style=art&seed={s}&r={r}",
+"https://image.pollinations.ai/prompt/{p}?style=4k&seed={s}&r={r}",
+
+"https://image.pollinations.ai/prompt/{p}?width=768&height=768&seed={s}&r={r}",
+"https://image.pollinations.ai/prompt/{p}?width=512&height=512&seed={s}&r={r}"
+
 ]
 
-# ====== СТАРТ ======
-@bot.message_handler(commands=['start'])
-def start(msg):
-    add_user(msg.from_user.id)
-    bot.send_message(msg.chat.id,
-        "🎨 Бот генерации изображений\nУ тебя 10 бесплатных попыток",
-        reply_markup=menu()
-    )
+def generate(prompt):
 
-# ====== ПРОФИЛЬ ======
-@bot.message_handler(func=lambda m: m.text=="👤 Профиль")
-def profile(msg):
-    u = get_user(msg.from_user.id)
-    if not u:
-        return
-    bot.send_message(
-        msg.chat.id,
-        f"👤 Профиль\n\nКредиты: {u[0]}\nГенераций: {u[1]}",
-        reply_markup=menu()
-    )
+    prompt = prompt + ", detailed, high quality, 4k"
+    p = urllib.parse.quote(prompt)
 
-# ====== АДМИН СТАТ ======
-@bot.message_handler(func=lambda m: m.text=="📊 Статистика")
-def stats(msg):
-    if msg.from_user.id != ADMIN_ID:
-        return
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    users = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    gens = c.execute("SELECT SUM(total_gen) FROM users").fetchone()[0]
-    conn.close()
-    bot.send_message(
-        msg.chat.id,
-        f"📊 Статистика\nПользователей: {users}\nГенераций: {gens or 0}",
-        reply_markup=menu()
-    )
+    random.shuffle(SERVERS)
 
-# ====== КУПИТЬ (БЕСПЛАТНО) ======
-@bot.message_handler(func=lambda m: m.text=="⭐ Купить")
-def buy(msg):
-    add_credits(msg.from_user.id, 10)
-    bot.send_message(
-        msg.chat.id,
-        "🎁 Тебе добавлено 10 попыток бесплатно",
-        reply_markup=menu()
-    )
+    for i,url in enumerate(SERVERS,1):
+        seed = random.randint(1,9999999)
+        r = int(time.time()*1000)
 
-# ====== РИСОВАТЬ ======
-@bot.message_handler(func=lambda m: m.text=="🎨 Рисовать")
-def draw(msg):
-    u = get_user(msg.from_user.id)
-    if not u or u[0] <= 0:
-        bot.send_message(msg.chat.id,"❌ Нет попыток", reply_markup=menu())
-        return
-    m = bot.send_message(msg.chat.id,"Напиши запрос")
-    bot.register_next_step_handler(m, gen)
+        link = url.format(p=p,s=seed,r=r)
 
-def gen(msg):
-    uid = msg.from_user.id
-    prompt = msg.text
-    safe = urllib.parse.quote(prompt)
-
-    bot.send_message(msg.chat.id,"⏳ Генерация...")
-
-    for url in SERVICES:
         try:
-            r = requests.get(url.format(p=safe), timeout=30)
-            if r.status_code == 200 and r.content:
-                bot.send_photo(
-                    msg.chat.id,
-                    BytesIO(r.content),
-                    caption=prompt,
-                    reply_markup=menu()
-                )
-                add_credits(uid, -1)
-                add_gen(uid)
-                return
-            else:
-                bot.send_message(msg.chat.id,f"⚠️ Ошибка сервиса: {r.status_code}")
-        except Exception as e:
-            bot.send_message(msg.chat.id,f"⚠️ {e}")
+            resp = requests.get(link,timeout=25)
+            if resp.status_code == 200 and len(resp.content)>5000:
+                return resp.content,f"Сервер {i}"
+        except:
+            pass
 
-    bot.send_message(msg.chat.id,"❌ Все сервисы недоступны", reply_markup=menu())
+    return None,None
 
-# ====== ЗАПУСК ======
-print("BOT START")
+@bot.message_handler(commands=["start"])
+def start(m):
+    add_user(m.from_user.id)
+    bot.send_message(m.chat.id,"🎨 Бот генерации изображений\nУ тебя 57 попыток",reply_markup=menu())
+
+@bot.message_handler(func=lambda m: m.text=="👤 Профиль")
+def prof(m):
+    u=get_user(m.from_user.id)
+    if u:
+        bot.send_message(m.chat.id,f"Кредиты: {u[0]}\nГенераций: {u[1]}",reply_markup=menu())
+
+@bot.message_handler(func=lambda m: m.text=="📊 Статистика")
+def stats(m):
+    if m.from_user.id!=ADMIN_ID: return
+    c=db().cursor()
+    users=c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    gen=c.execute("SELECT SUM(total) FROM users").fetchone()[0]
+    bot.send_message(m.chat.id,f"Пользователей: {users}\nГенераций: {gen or 0}",reply_markup=menu())
+
+@bot.message_handler(func=lambda m: m.text=="⭐ Купить")
+def buy(m):
+    add_credits(m.from_user.id,10)
+    bot.send_message(m.chat.id,"🎁 Тебе добавлено 10 попыток бесплатно",reply_markup=menu())
+
+@bot.message_handler(func=lambda m: m.text=="🎨 Рисовать")
+def draw(m):
+    u=get_user(m.from_user.id)
+    if not u or u[0]<=0:
+        bot.send_message(m.chat.id,"Нет попыток",reply_markup=menu())
+        return
+    msg=bot.send_message(m.chat.id,"Напиши запрос")
+    bot.register_next_step_handler(msg,gen)
+
+def gen(m):
+    prompt=m.text
+    wait=bot.send_message(m.chat.id,"⏳ Генерация...")
+
+    img,server=generate(prompt)
+
+    if img:
+        use_credit(m.from_user.id)
+        bot.send_photo(m.chat.id,BytesIO(img),
+            caption=f"{prompt}\n{server}",
+            reply_markup=menu())
+    else:
+        bot.send_message(m.chat.id,"❌ Все бесплатные сервисы недоступны",reply_markup=menu())
+
+    bot.delete_message(m.chat.id,wait.message_id)
+
+print("BOT STARTED")
 bot.infinity_polling()
